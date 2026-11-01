@@ -47,7 +47,7 @@ ClientFeatures = {
                 -- size. Tibia.dat stays the same. Only the Direct3D 11 renderer draws
                 -- them in full detail, the other renderers scale them back to 32x32.
                 -- false (or no Tibia96.spr) uses the normal 32x32 sprites.
-                GameHDSprites = false,
+                GameHDSprites = true,
             }
         },
 
