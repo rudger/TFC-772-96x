@@ -316,6 +316,9 @@ class Engine
 		SDL_INLINE bool isChatInputEnabled() {return m_chatInputEnabled;}
 		SDL_INLINE bool isChatInputTemporary() {return m_chatInputTemporary;}
 		SDL_INLINE bool hasSmartWalking() {return m_smartWalking;}
+		SDL_INLINE bool hasHDGraphics() {return m_hdGraphics;}
+		void setHDGraphics(bool hdGraphics);
+		void updateHDSprites();
 		SDL_INLINE bool hasShowNames() {return m_showNames;}
 		SDL_INLINE bool hasShowMarks() {return m_showMarks;}
 		SDL_INLINE bool hasShowPvPFrames() {return m_showPvPFrames;}
@@ -500,6 +503,7 @@ class Engine
 		bool m_autoChaseOff = true;
 		bool m_wasdWalking = false;
 		bool m_smartWalking = false;
+		bool m_hdGraphics = false;
 		bool m_chatInputEnabled = true;
 		bool m_chatInputTemporary = false;
 		bool m_showNames = true;
