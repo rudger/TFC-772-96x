@@ -81,7 +81,7 @@ class SpriteManager
 		unsigned char* LoadSprite_RGBA(Uint32 spriteId);
 		unsigned char* LoadSprite_BGRA(Uint32 spriteId);
 
-		// HD sprites (GameHDSprites): Tibia96.spr next to Tibia.spr.
+		// HD sprites (HD graphics option): Tibia96.spr next to Tibia.spr.
 		bool loadHDSprites(const char* filename);
 		void unloadHDSprites();
 		unsigned char* LoadSpriteHD(Uint32 spriteId, bool bgra);

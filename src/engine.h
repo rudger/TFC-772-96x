@@ -77,7 +77,7 @@ class Surface
 
 		virtual void drawAutomapTile(Uint32 currentArea, bool& recreate, Uint8 color[256][256], Sint32 x, Sint32 y, Sint32 w, Sint32 h, Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh) = 0;
 
-		// Renderers that can draw HD sprites (GameHDSprites) in full detail.
+		// Renderers that can draw HD sprites (HD graphics) in full detail.
 		virtual bool supportsHDSprites() {return false;}
 };
 
@@ -503,7 +503,7 @@ class Engine
 		bool m_autoChaseOff = true;
 		bool m_wasdWalking = false;
 		bool m_smartWalking = false;
-		bool m_hdGraphics = false;
+		bool m_hdGraphics = true;
 		bool m_chatInputEnabled = true;
 		bool m_chatInputTemporary = false;
 		bool m_showNames = true;

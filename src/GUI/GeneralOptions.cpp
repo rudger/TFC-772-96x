@@ -187,8 +187,8 @@ void UTIL_generalOptions()
 	if(pWindow)
 		g_engine.removeWindow(pWindow);
 
-	//The HD graphics option is only shown when GameHDSprites is on in features.lua
-	const bool hdOption = (g_game.hasGameFeature(GAME_FEATURE_HD_SPRITES) && !g_game.hasGameFeature(GAME_FEATURE_NEWFILES_STRUCTURE));
+	//The HD graphics option (Tibia96.spr) is shown for the old file structure (Tibia.spr)
+	const bool hdOption = !g_game.hasGameFeature(GAME_FEATURE_NEWFILES_STRUCTURE);
 	const Sint32 hdOffsetY = (hdOption ? 33 : 0);
 	const Sint32 windowHeight = GENERAL_OPTIONS_HEIGHT + hdOffsetY;
 	GUI_Window* newWindow = new GUI_Window(iRect(0, 0, GENERAL_OPTIONS_WIDTH, windowHeight), GENERAL_OPTIONS_TITLE, GUI_WINDOW_GENERALOPTIONS);

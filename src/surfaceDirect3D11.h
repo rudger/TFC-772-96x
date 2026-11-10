@@ -255,7 +255,7 @@ class SurfaceDirect3D11 : public Surface
 		Uint32 m_spritesPerAtlas = 0;
 		Uint32 m_spritesPerModulo = 0;
 
-		// HD sprites (GameHDSprites): sprites are m_spriteSize big in the atlases
+		// HD sprites (HD graphics): sprites are m_spriteSize big in the atlases
 		// and the game window is m_sceneScale times bigger, while everything is
 		// still drawn in 32 pixel units (m_viewScale is the scale of the current
 		// render target).

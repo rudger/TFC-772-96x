@@ -324,7 +324,7 @@ void enterGame_Events(Uint32 event, Sint32)
 						}
 					}
 
-					// HD sprites (GameHDSprites + HD graphics option): Tibia96.spr next to Tibia.spr.
+					// HD sprites (HD graphics option): Tibia96.spr next to Tibia.spr.
 					g_engine.updateHDSprites();
 					g_engine.getRender()->spriteManagerReset();
 				}

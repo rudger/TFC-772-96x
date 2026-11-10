@@ -152,7 +152,6 @@ namespace
 		{"GameSequencedPackets", GAME_FEATURE_PROTOCOLSEQUENCE},
 		{"GameProtocolSequence", GAME_FEATURE_PROTOCOLSEQUENCE},
 		{"GameBlessDialog", GAME_FEATURE_BLESS_DIALOG},
-		{"GameHDSprites", GAME_FEATURE_HD_SPRITES},
 		{"GameQuestTracker", GAME_FEATURE_QUEST_TRACKER},
 		{"GameTime", GAME_FEATURE_GAMETIME},
 		{"GameCompedium", GAME_FEATURE_COMPEDIUM},

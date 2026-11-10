@@ -3970,7 +3970,7 @@ void Engine::drawDistanceEffect(ThingType* thing, Sint32 x, Sint32 y, Sint32 sca
 	}
 }
 
-// HD graphics (General options): only when GameHDSprites allows it.
+// HD graphics (General options): Tibia96.spr on or off.
 void Engine::setHDGraphics(bool hdGraphics)
 {
 	if(m_hdGraphics == hdGraphics)
@@ -3989,7 +3989,7 @@ void Engine::setHDGraphics(bool hdGraphics)
 // its sprites afterwards.
 void Engine::updateHDSprites()
 {
-	bool wanted = (m_hdGraphics && g_game.hasGameFeature(GAME_FEATURE_HD_SPRITES) && !g_game.hasGameFeature(GAME_FEATURE_NEWFILES_STRUCTURE));
+	bool wanted = (m_hdGraphics && !g_game.hasGameFeature(GAME_FEATURE_NEWFILES_STRUCTURE));
 	if(!wanted)
 	{
 		g_spriteManager.unloadHDSprites();
@@ -4001,7 +4001,7 @@ void Engine::updateHDSprites()
 	g_spriteManager.loadHDSprites(hdPath.c_str());
 }
 
-// The size of the sprites the renderer gets: the HD size (GameHDSprites) when
+// The size of the sprites the renderer gets: the HD size (HD graphics) when
 // it can draw them, otherwise 32.
 Uint32 Engine::getSpriteSize()
 {
