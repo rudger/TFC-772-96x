@@ -1,6 +1,10 @@
 The Forgotten Client
 ===============
 
+Instructions:
+1. Copy Tibia.dat, Tibia.pic, Tibia.spr and Tibia96.spr to -> /data/Assets/
+2. Open data, run Tibia.exe and enjoy.
+
 The Forgotten Client is a free and open-source game client written completely in C++. It is supposed to be used to connect to The Forgotten Server.  
 This project is created using:
 * [libSDL 2.0](https://www.libsdl.org/)
