@@ -10,24 +10,41 @@
 -- desync and the client can freeze, debug, or disconnect. The client and server
 -- must agree.
 --
--- This profile is for Mateus TFS 1.8 downgrade 8.60.
--- Do not change protocol/clientVersion/fileVersion to 870 for this server.
+-- Profiles:
+--   cip772        = tibia-gameserver-unified (CipSoft 7.72, login 7171 / game 7172).
+--                   Needs the 7.72 Tibia.dat / Tibia.spr in data/Assets.
+--   tfs860_custom = Mateus TFS 1.8 downgrade 8.60.
+-- Select a profile with selectedProfile or per server in serverProfiles.
 
 ClientFeatures = {
-    selectedProfile = "tfs860_custom",
+    selectedProfile = "cip772",
 
     default = {
-        protocol = 860,
+        protocol = 772,
         host = "127.0.0.1",
         port = 7171,
     },
 
     serverProfiles = {
-        ["127.0.0.1:7171"] = "tfs860_custom",
-        ["localhost:7171"] = "tfs860_custom",
+        ["127.0.0.1:7171"] = "cip772",
+        ["localhost:7171"] = "cip772",
     },
 
     profiles = {
+        cip772 = {
+            description = "CipSoft 7.72 (tibia-gameserver-unified)",
+            protocol = 772,
+            clientVersion = 772,
+            fileVersion = 772,
+
+            -- Use the client's built-in 7.72 features: numeric account number,
+            -- RSA + XTEA, no checksum, no 8.x extensions.
+            inheritDefaults = true,
+
+            features = {
+            }
+        },
+
         tfs860_custom = {
             description = "TFS 1.8 downgrade 8.60 custom protocol",
             protocol = 860,
@@ -35,7 +52,7 @@ ClientFeatures = {
             fileVersion = 860,
 
             -- false below really disables the feature. The server must match.
-            inheritDefaults = false,
+            inheritDefaults = true,
 
             features = {
                 -- Core 8.60 protocol.
@@ -63,24 +80,24 @@ ClientFeatures = {
                 -- Your TFS 1.8 custom 8.60 features.
                 -- Example: setting GamePlayerMounts = false hides Mount/Dismount
                 -- and blocks the server feature packet from enabling mounts again.
-                GamePlayerMounts = true,
-                GameMagicEffectU16 = true,
-                GameDistanceEffectU16 = true,
-                GameDoubleHealth = true,
-                GameOfflineTrainingTime = true,
-                GameSkillsBase = true,
-                GameBaseSkillU16 = true,
-                GameDoubleSkills = true,
-                GameAdditionalSkills = true,
-                GameIdleAnimations = true,
-                GameEnhancedAnimations = true,
-                GameExtendedClientPing = true,
-                GameSpritesU32 = true,
-                GameDoublePlayerGoodsMoney = true,
-                GameCreatureIcons = true,
-                GamePurseSlot = true,
-                GamePrey = true,
-                GameThingUpgradeClassification = true,
+                GamePlayerMounts = false,
+                GameMagicEffectU16 = false,
+                GameDistanceEffectU16 = false,
+                GameDoubleHealth = false,
+                GameOfflineTrainingTime = false,
+                GameSkillsBase = false,
+                GameBaseSkillU16 = false,
+                GameDoubleSkills = false,
+                GameAdditionalSkills = false,
+                GameIdleAnimations = false,
+                GameEnhancedAnimations = false,
+                GameExtendedClientPing = false,
+                GameSpritesU32 = false,
+                GameDoublePlayerGoodsMoney = false,
+                GameCreatureIcons = false,
+                GamePurseSlot = false,
+                GamePrey = false,
+                GameThingUpgradeClassification = false,
 
                 -- Keep these false unless your server code really sends them.
                 GameDeathPenalty = false,
