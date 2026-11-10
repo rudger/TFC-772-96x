@@ -47,7 +47,7 @@ struct VertexD3D9
 typedef struct IDirect3DTexture9 IDirect3DTexture9;
 struct Direct3D9Texture
 {
-	Direct3D9Texture() : m_texture(NULL) {}
+	Direct3D9Texture() : m_texture(NULL), m_mipmaps(false) {}
 
 	operator bool() const {return m_texture;}
 
@@ -57,7 +57,7 @@ struct Direct3D9Texture
 
 	// moveable
 	Direct3D9Texture(Direct3D9Texture&& rhs) noexcept : 
-		m_texture(rhs.m_texture), m_width(rhs.m_width), m_height(rhs.m_height), m_scaleW(rhs.m_scaleW), m_scaleH(rhs.m_scaleH), m_linearSample(rhs.m_linearSample)
+		m_texture(rhs.m_texture), m_width(rhs.m_width), m_height(rhs.m_height), m_scaleW(rhs.m_scaleW), m_scaleH(rhs.m_scaleH), m_linearSample(rhs.m_linearSample), m_mipmaps(rhs.m_mipmaps)
 	{
 		rhs.m_texture = NULL;
 	}
@@ -71,6 +71,7 @@ struct Direct3D9Texture
 			m_scaleW = rhs.m_scaleW;
 			m_scaleH = rhs.m_scaleH;
 			m_linearSample = rhs.m_linearSample;
+			m_mipmaps = rhs.m_mipmaps;
 			rhs.m_texture = NULL;
 		}
 		return (*this);
@@ -82,6 +83,7 @@ struct Direct3D9Texture
 	float m_scaleW;
 	float m_scaleH;
 	bool m_linearSample;
+	bool m_mipmaps;
 };
 
 struct Direct3D9SpriteData
@@ -116,7 +118,7 @@ class SurfaceDirect3D9 : public Surface
 		SurfaceDirect3D9(const SurfaceDirect3D9&&) = delete;
 		SurfaceDirect3D9& operator=(const SurfaceDirect3D9&&) = delete;
 
-		bool createDirect3DTexture(Direct3D9Texture& texture, Uint32 width, Uint32 height, bool linearSampler, bool frameBuffer = false);
+		bool createDirect3DTexture(Direct3D9Texture& texture, Uint32 width, Uint32 height, bool linearSampler, bool frameBuffer = false, bool mipmaps = false);
 		bool updateTextureData(Direct3D9Texture& texture, unsigned char* data);
 		void releaseDirect3DTexture(Direct3D9Texture& texture);
 		void updateTextureScaling(Direct3D9Texture& texture);
@@ -135,9 +137,11 @@ class SurfaceDirect3D9 : public Surface
 		void generateSpriteAtlases();
 
 		void renderTargetsRecreate();
+		void createGameWindow();
 		virtual void init();
 		virtual void doResize(Sint32 w, Sint32 h);
 		virtual void spriteManagerReset();
+		virtual bool supportsHDSprites() {return true;}
 		void releaseTextures();
 		virtual unsigned char* getScreenPixels(Sint32& width, Sint32& height, bool& bgra);
 
@@ -228,6 +232,17 @@ class SurfaceDirect3D9 : public Surface
 		Uint32 m_spriteAtlases = 0;
 		Uint32 m_spritesPerAtlas = 0;
 		Uint32 m_spritesPerModulo = 0;
+		Uint32 m_spritesPerRow = 0;
+		Uint32 m_maxSprites = MAX_SPRITES;
+
+		// HD sprites: m_spriteSize is the size of a sprite in the atlases and the
+		// game window is m_sceneScale times bigger; m_viewScale is the scale of
+		// the current render target (drawing coordinates stay in 32 pixel units).
+		Uint32 m_spriteSize = 32;
+		Uint32 m_sceneScale = 1;
+		Uint32 m_viewScale = 1;
+		bool m_usingMipmaps = false;
+		bool m_canAutoGenMipmaps = false;
 
 		bool m_usingLinearSample = false;
 		bool m_useAlphaBlending = false;

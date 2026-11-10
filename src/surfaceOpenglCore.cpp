@@ -325,7 +325,7 @@ void SurfaceOpenglCore::releaseOpenGLCoreShader(unsigned int& shader)
 	}
 }
 
-bool SurfaceOpenglCore::createOpenGLCoreTexture(OpenglCoreTexture& texture, Uint32 width, Uint32 height, bool linearSampler, bool frameBuffer)
+bool SurfaceOpenglCore::createOpenGLCoreTexture(OpenglCoreTexture& texture, Uint32 width, Uint32 height, bool linearSampler, bool frameBuffer, bool mipmaps)
 {
 	releaseOpenGLCoreTexture(texture);
 	while(OglGetError() != 0)
@@ -339,11 +339,13 @@ bool SurfaceOpenglCore::createOpenGLCoreTexture(OpenglCoreTexture& texture, Uint
 	texture.m_scaleH = 1.0f / height;
 
 	OglBindTexture(GL_TEXTURE_2D, texture.m_texture);
-	OglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (linearSampler ? GL_LINEAR : GL_NEAREST));
+	OglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (mipmaps ? 0x2703/*GL_LINEAR_MIPMAP_LINEAR*/ : (linearSampler ? GL_LINEAR : GL_NEAREST)));
 	OglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (linearSampler ? GL_LINEAR : GL_NEAREST));
 	OglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	OglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	OglTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
+	if(mipmaps)
+		OglGenerateMipmap(GL_TEXTURE_2D);
 	if(frameBuffer)
 	{
 		OglGenFramebuffers(1, &texture.m_framebuffer);
@@ -414,16 +416,18 @@ void SurfaceOpenglCore::updateViewport()
 		OglViewport(m_viewPortX, (w_h - m_viewPortY - m_viewPortH), m_viewPortW, m_viewPortH);
 	}
 
+	float logicalW = SDL_static_cast(float, m_viewPortW) / m_viewScale;
+	float logicalH = SDL_static_cast(float, m_viewPortH) / m_viewScale;
 	float projection[4][4];
-	projection[0][0] = 2.0f / m_viewPortW;
+	projection[0][0] = 2.0f / logicalW;
 	projection[0][1] = 0.0f;
 	projection[0][2] = 0.0f;
 	projection[0][3] = 0.0f;
 	projection[1][0] = 0.0f;
 	if(m_renderTarget)
-		projection[1][1] = 2.0f / m_viewPortH;
+		projection[1][1] = 2.0f / logicalH;
 	else
-		projection[1][1] = -2.0f / m_viewPortH;
+		projection[1][1] = -2.0f / logicalH;
 	projection[1][2] = 0.0f;
 	projection[1][3] = 0.0f;
 	projection[2][0] = 0.0f;
@@ -519,6 +523,7 @@ bool SurfaceOpenglCore::isSupported()
 	OGLLoadFunction(glTexImage2D);
 	OGLLoadFunction(glTexSubImage2D);
 	OGLLoadFunction(glTexParameteri);
+	OglGenerateMipmap = SDL_reinterpret_cast(PFN_OglGenerateMipmap, SDL_GL_GetProcAddress("glGenerateMipmap"));
 	OGLLoadFunction(glTexEnvi);
 	OGLLoadFunction(glPixelStorei);
 	OGLLoadFunction(glCopyTexSubImage2D);
@@ -668,7 +673,20 @@ bool SurfaceOpenglCore::isSupported()
 
 void SurfaceOpenglCore::generateSpriteAtlases()
 {
-	if(m_maxTextureSize >= 16384 && MAX_SPRITES > 65536)
+	bool linearAtlas = false;
+	if(m_spriteSize > 32)
+	{
+		// HD sprites: one 8192 atlas (or up to four 4096 ones) is enough for the
+		// sprites of a screen; the least used ones are replaced when it is full.
+		Uint32 atlasSize = (m_maxTextureSize >= 8192 ? 8192 : UTIL_min<Uint32>(SDL_static_cast(Uint32, m_maxTextureSize), 4096));
+		m_spritesPerModulo = atlasSize;
+		m_spritesPerRow = atlasSize / m_spriteSize;
+		m_spritesPerAtlas = m_spritesPerRow * m_spritesPerRow;
+		m_spriteAtlases = UTIL_max<Uint32>(1, UTIL_min<Uint32>(4, (4096 + m_spritesPerAtlas - 1) / m_spritesPerAtlas));
+		m_maxSprites = UTIL_min<Uint32>(MAX_SPRITES, m_spriteAtlases * m_spritesPerAtlas);
+		linearAtlas = true;// they are also drawn smaller, e.g. in the inventory
+	}
+	else if(m_maxTextureSize >= 16384 && MAX_SPRITES > 65536)
 	{
 		m_spriteAtlases = (MAX_SPRITES + 262143) / 262144;
 		m_spritesPerAtlas = 262144;
@@ -699,10 +717,16 @@ void SurfaceOpenglCore::generateSpriteAtlases()
 		m_spritesPerModulo = 1024;
 	}
 
+	if(m_spriteSize <= 32)
+	{
+		m_spritesPerRow = m_spritesPerModulo / 32;
+		m_maxSprites = MAX_SPRITES;
+	}
+
 	for(Uint32 i = 0; i < m_spriteAtlases; ++i)
 	{
 		m_spritesAtlas.emplace_back();
-		if(!createOpenGLCoreTexture(m_spritesAtlas.back(), m_spritesPerModulo, m_spritesPerModulo, false))
+		if(!createOpenGLCoreTexture(m_spritesAtlas.back(), m_spritesPerModulo, m_spritesPerModulo, linearAtlas))
 		{
 			UTIL_MessageBox(true, "OpenGL Core: Out of video memory.");
 			exit(-1);
@@ -722,11 +746,7 @@ void SurfaceOpenglCore::init()
 		exit(-1);
 	}
 
-	if(!createOpenGLCoreTexture(m_gameWindow, RENDERTARGET_WIDTH, RENDERTARGET_HEIGHT, (g_engine.getAntialiasing() == CLIENT_ANTIALIASING_NORMAL), true))
-	{
-		UTIL_MessageBox(true, "OpenGL Core: Out of video memory.");
-		exit(-1);
-	}
+	createGameWindow();
 
 	OglGenVertexArrays(1, &m_vertex_array);
 	OglBindVertexArray(m_vertex_array);
@@ -770,6 +790,18 @@ void SurfaceOpenglCore::init()
 	updateTextureData(m_colorTexture, whitePixels);
 }
 
+void SurfaceOpenglCore::createGameWindow()
+{
+	// With HD sprites the game window is m_sceneScale times bigger and gets
+	// mipmaps, so it is scaled down smoothly to the window.
+	bool hd = (m_sceneScale > 1);
+	if(!createOpenGLCoreTexture(m_gameWindow, RENDERTARGET_WIDTH * m_sceneScale, RENDERTARGET_HEIGHT * m_sceneScale, (hd || g_engine.getAntialiasing() == CLIENT_ANTIALIASING_NORMAL), true, hd))
+	{
+		UTIL_MessageBox(true, "OpenGL Core: Out of video memory.");
+		exit(-1);
+	}
+}
+
 void SurfaceOpenglCore::doResize(Sint32 w, Sint32 h)
 {
 	m_viewPortX = 0;
@@ -783,6 +815,14 @@ void SurfaceOpenglCore::doResize(Sint32 w, Sint32 h)
 void SurfaceOpenglCore::spriteManagerReset()
 {
 	scheduleBatch();
+	Uint32 spriteSize = g_engine.getSpriteSize();
+	if(spriteSize != m_spriteSize)
+	{
+		m_spriteSize = spriteSize;
+		m_sceneScale = UTIL_max<Uint32>(1, spriteSize / 32);
+		createGameWindow();
+	}
+
 	for(U32BGLCoreTextures::iterator it = m_automapTiles.begin(), end = m_automapTiles.end(); it != end; ++it)
 		releaseOpenGLCoreTexture(it->second);
 
@@ -948,6 +988,7 @@ void SurfaceOpenglCore::scheduleBatch()
 
 bool SurfaceOpenglCore::integer_scaling(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh, Sint32 x, Sint32 y, Sint32 w, Sint32 h)
 {
+	m_viewScale = 1;
 	Sint32 width = RENDERTARGET_WIDTH;
 	Sint32 height = RENDERTARGET_HEIGHT;
 	UTIL_integer_scale(width, height, w, h, m_maxTextureSize, m_maxTextureSize);
@@ -1038,8 +1079,16 @@ bool SurfaceOpenglCore::integer_scaling(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 
 
 void SurfaceOpenglCore::drawGameScene(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh, Sint32 x, Sint32 y, Sint32 w, Sint32 h)
 {
+	// The game window is m_sceneScale times bigger with HD sprites.
+	Sint32 sceneScale = SDL_static_cast(Sint32, m_sceneScale);
+	sx *= sceneScale; sy *= sceneScale; sw *= sceneScale; sh *= sceneScale;
+
+	// Sharpening makes light dots next to the dark outlines of HD sprites
+	// that are shrunk to the window, so it is skipped with HD sprites.
+	bool sharpen = (g_engine.isSharpening() && m_haveSharpening && sceneScale == 1);
+
 	Uint8 antialiasing = g_engine.getAntialiasing();
-	if(antialiasing == CLIENT_ANTIALIASING_INTEGER)
+	if(antialiasing == CLIENT_ANTIALIASING_INTEGER && sceneScale == 1)
 	{
 		if(integer_scaling(sx, sy, sw, sh, x, y, w, h))
 			return;
@@ -1073,7 +1122,12 @@ void SurfaceOpenglCore::drawGameScene(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh
 	texcoords[6] = maxu; texcoords[7] = maxv;
 
 	scheduleBatch();
-	if(g_engine.isSharpening() && m_haveSharpening)
+	if(sceneScale > 1)
+	{
+		OglBindTexture(GL_TEXTURE_2D, m_gameWindow.m_texture);
+		OglGenerateMipmap(GL_TEXTURE_2D);
+	}
+	if(sharpen)
 	{
 		selectShader(m_programSharpen);
 		OglUniform2f(m_sharpen_textureSize, 1.0f / w * (sw * m_gameWindow.m_scaleW), 1.0f / h * (sh * m_gameWindow.m_scaleH));
@@ -1083,7 +1137,7 @@ void SurfaceOpenglCore::drawGameScene(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh
 	drawQuad(getTextureIndex(&m_gameWindow), vertices, texcoords);
 	scheduleBatch();
 	OglBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-	if(g_engine.isSharpening() && m_haveSharpening)
+	if(sharpen)
 		selectShader(m_programStandard);
 }
 
@@ -1096,6 +1150,7 @@ void SurfaceOpenglCore::beginGameScene()
 	m_viewPortY = 0;
 	m_viewPortW = m_gameWindow.m_width;
 	m_viewPortH = m_gameWindow.m_height;
+	m_viewScale = m_sceneScale;
 	updateViewport();
 	fillRectangle(0, 0, RENDERTARGET_WIDTH, RENDERTARGET_HEIGHT, 0x00, 0x00, 0x00, 255);
 }
@@ -1109,6 +1164,7 @@ void SurfaceOpenglCore::endGameScene()
 	m_viewPortY = 0;
 	m_viewPortW = g_engine.getWindowWidth();
 	m_viewPortH = g_engine.getWindowHeight();
+	m_viewScale = 1;
 	updateViewport();
 }
 
@@ -1309,7 +1365,10 @@ void SurfaceOpenglCore::setClipRect(Sint32 x, Sint32 y, Sint32 w, Sint32 h)
 	scheduleBatch();
 	OglEnable(GL_SCISSOR_TEST);
 	if(m_renderTarget)
-		OglScissor((m_viewPortX + x), (m_viewPortY + y), w, h);
+	{
+		Sint32 scale = SDL_static_cast(Sint32, m_viewScale);
+		OglScissor((m_viewPortX + x * scale), (m_viewPortY + y * scale), w * scale, h * scale);
+	}
 	else
 	{
 		Sint32 w_w, w_h;
@@ -1611,8 +1670,8 @@ bool SurfaceOpenglCore::loadSprite(Uint32 spriteId, OpenglCoreTexture* texture, 
 
 	OglBindTexture(GL_TEXTURE_2D, texture->m_texture);
 	OglPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	OglPixelStorei(GL_UNPACK_ROW_LENGTH, 32);
-	OglTexSubImage2D(GL_TEXTURE_2D, 0, SDL_static_cast(int, xoff), SDL_static_cast(int, yoff), 32, 32, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
+	OglPixelStorei(GL_UNPACK_ROW_LENGTH, SDL_static_cast(int, m_spriteSize));
+	OglTexSubImage2D(GL_TEXTURE_2D, 0, SDL_static_cast(int, xoff), SDL_static_cast(int, yoff), m_spriteSize, m_spriteSize, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
 	SDL_free(pixels);
 	return true;
 }
@@ -1625,8 +1684,8 @@ bool SurfaceOpenglCore::loadSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Uin
 
 	OglBindTexture(GL_TEXTURE_2D, texture->m_texture);
 	OglPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	OglPixelStorei(GL_UNPACK_ROW_LENGTH, 32);
-	OglTexSubImage2D(GL_TEXTURE_2D, 0, SDL_static_cast(int, xoff), SDL_static_cast(int, yoff), 32, 32, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
+	OglPixelStorei(GL_UNPACK_ROW_LENGTH, SDL_static_cast(int, m_spriteSize));
+	OglTexSubImage2D(GL_TEXTURE_2D, 0, SDL_static_cast(int, xoff), SDL_static_cast(int, yoff), m_spriteSize, m_spriteSize, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
 	SDL_free(pixels);
 	return true;
 }
@@ -1655,9 +1714,9 @@ void SurfaceOpenglCore::drawSprite(Uint32 spriteId, Sint32 x, Sint32 y, Sint32 w
 	U64BGLCoreTextures::iterator it = m_sprites.find(tempPos);
 	if(it == m_sprites.end())
 	{
-		if(m_sprites.size() >= MAX_SPRITES)
+		if(m_sprites.size() >= m_maxSprites)
 		{
-			while(++m_spriteChecker < MAX_SPRITES)
+			while(++m_spriteChecker < m_maxSprites)
 			{
 				Uint64 oldSpriteId = m_spritesIds.front();
 				it = m_sprites.find(oldSpriteId);
@@ -1698,13 +1757,13 @@ void SurfaceOpenglCore::drawSprite(Uint32 spriteId, Sint32 x, Sint32 y, Sint32 w
 		{
 			Uint32 spriteIndex = SDL_static_cast(Uint32, m_sprites.size());
 			Uint32 spriteAtlas = spriteIndex / m_spritesPerAtlas;
-			spriteIndex = (spriteIndex % m_spritesPerAtlas) * 32;
+			spriteIndex = (spriteIndex % m_spritesPerAtlas);
 			if(spriteAtlas >= m_spritesAtlas.size())
 				return;
 
 			OpenglCoreSpriteData& sprData = m_sprites[tempPos];
-			sprData.m_xOffset = spriteIndex % m_spritesPerModulo;
-			sprData.m_yOffset = (spriteIndex / m_spritesPerModulo) * 32;
+			sprData.m_xOffset = (spriteIndex % m_spritesPerRow) * m_spriteSize;
+			sprData.m_yOffset = (spriteIndex / m_spritesPerRow) * m_spriteSize;
 			sprData.m_surface = spriteAtlas;
 			sprData.m_lastUsage = m_currentFrame;
 			m_spritesIds.push_back(tempPos);
@@ -1733,6 +1792,13 @@ void SurfaceOpenglCore::drawSprite(Uint32 spriteId, Sint32 x, Sint32 y, Sint32 w
 	float maxx = SDL_static_cast(float, x + w);
 	float miny = SDL_static_cast(float, y);
 	float maxy = SDL_static_cast(float, y + h);
+
+	if(m_spriteSize != 32)
+	{
+		// Source coordinates are in 32 pixel units.
+		Sint32 spriteScale = SDL_static_cast(Sint32, m_spriteSize / 32);
+		sx *= spriteScale; sy *= spriteScale; sw *= spriteScale; sh *= spriteScale;
+	}
 
 	sx += SDL_static_cast(Sint32, xOffset);
 	sy += SDL_static_cast(Sint32, yOffset);
@@ -1780,9 +1846,9 @@ void SurfaceOpenglCore::drawSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Sin
 	U64BGLCoreTextures::iterator it = m_sprites.find(tempPos);
 	if(it == m_sprites.end())
 	{
-		if(m_sprites.size() >= MAX_SPRITES)
+		if(m_sprites.size() >= m_maxSprites)
 		{
-			while(++m_spriteChecker < MAX_SPRITES)
+			while(++m_spriteChecker < m_maxSprites)
 			{
 				Uint64 oldSpriteId = m_spritesIds.front();
 				it = m_sprites.find(oldSpriteId);
@@ -1823,13 +1889,13 @@ void SurfaceOpenglCore::drawSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Sin
 		{
 			Uint32 spriteIndex = SDL_static_cast(Uint32, m_sprites.size());
 			Uint32 spriteAtlas = spriteIndex / m_spritesPerAtlas;
-			spriteIndex = (spriteIndex % m_spritesPerAtlas) * 32;
+			spriteIndex = (spriteIndex % m_spritesPerAtlas);
 			if(spriteAtlas >= m_spritesAtlas.size())
 				return;
 
 			OpenglCoreSpriteData& sprData = m_sprites[tempPos];
-			sprData.m_xOffset = spriteIndex % m_spritesPerModulo;
-			sprData.m_yOffset = (spriteIndex / m_spritesPerModulo) * 32;
+			sprData.m_xOffset = (spriteIndex % m_spritesPerRow) * m_spriteSize;
+			sprData.m_yOffset = (spriteIndex / m_spritesPerRow) * m_spriteSize;
 			sprData.m_surface = spriteAtlas;
 			sprData.m_lastUsage = m_currentFrame;
 			m_spritesIds.push_back(tempPos);
@@ -1858,6 +1924,13 @@ void SurfaceOpenglCore::drawSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Sin
 	float maxx = SDL_static_cast(float, x + w);
 	float miny = SDL_static_cast(float, y);
 	float maxy = SDL_static_cast(float, y + h);
+
+	if(m_spriteSize != 32)
+	{
+		// Source coordinates are in 32 pixel units.
+		Sint32 spriteScale = SDL_static_cast(Sint32, m_spriteSize / 32);
+		sx *= spriteScale; sy *= spriteScale; sw *= spriteScale; sh *= spriteScale;
+	}
 
 	sx += SDL_static_cast(Sint32, xOffset);
 	sy += SDL_static_cast(Sint32, yOffset);

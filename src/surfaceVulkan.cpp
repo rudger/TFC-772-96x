@@ -801,6 +801,9 @@ void SurfaceVulkan::cleanupSwapChainResources()
 	if(m_scaled_gameWindow)
 		releaseVulkanTexture(m_scaled_gameWindow);
 
+	if(m_hdHalfGameWindow)
+		releaseVulkanTexture(m_hdHalfGameWindow);
+
 	if(m_gameWindow)
 		releaseVulkanTexture(m_gameWindow);
 
@@ -1697,7 +1700,17 @@ void SurfaceVulkan::renderTargetsRecreate()
 	if(m_scaled_gameWindow)
 		releaseVulkanTexture(m_scaled_gameWindow);
 
-	if(!createVulkanTexture(m_gameWindow, RENDERTARGET_WIDTH, RENDERTARGET_HEIGHT, (g_engine.getAntialiasing() == CLIENT_ANTIALIASING_NORMAL), true) || !createTextureFramebuffer(m_gameWindow))
+	createGameWindow();
+}
+
+void SurfaceVulkan::createGameWindow()
+{
+	// With HD sprites the game window is m_sceneScale times bigger and is
+	// sampled smoothly (linear) when it is scaled down to the window.
+	bool hd = (m_sceneScale > 1);
+	if(m_hdHalfGameWindow)
+		releaseVulkanTexture(m_hdHalfGameWindow);
+	if(!createVulkanTexture(m_gameWindow, RENDERTARGET_WIDTH * m_sceneScale, RENDERTARGET_HEIGHT * m_sceneScale, (hd || g_engine.getAntialiasing() == CLIENT_ANTIALIASING_NORMAL), true) || !createTextureFramebuffer(m_gameWindow))
 	{
 		UTIL_MessageBox(true, "Vulkan: Out of video memory.");
 		exit(-1);
@@ -1706,7 +1719,20 @@ void SurfaceVulkan::renderTargetsRecreate()
 
 void SurfaceVulkan::generateSpriteAtlases()
 {
-	if(m_maxTextureSize >= 16384 && MAX_SPRITES > 65536)
+	bool linearAtlas = false;
+	if(m_spriteSize > 32)
+	{
+		// HD sprites: one 8192 atlas (or up to four 4096 ones) is enough for the
+		// sprites of a screen; the least used ones are replaced when it is full.
+		Uint32 atlasSize = (m_maxTextureSize >= 8192 ? 8192 : UTIL_min<Uint32>(SDL_static_cast(Uint32, m_maxTextureSize), 4096));
+		m_spritesPerModulo = atlasSize;
+		m_spritesPerRow = atlasSize / m_spriteSize;
+		m_spritesPerAtlas = m_spritesPerRow * m_spritesPerRow;
+		m_spriteAtlases = UTIL_max<Uint32>(1, UTIL_min<Uint32>(4, (4096 + m_spritesPerAtlas - 1) / m_spritesPerAtlas));
+		m_maxSprites = UTIL_min<Uint32>(MAX_SPRITES, m_spriteAtlases * m_spritesPerAtlas);
+		linearAtlas = true;// they are also drawn smaller, e.g. in the inventory
+	}
+	else if(m_maxTextureSize >= 16384 && MAX_SPRITES > 65536)
 	{
 		m_spriteAtlases = (MAX_SPRITES + 262143) / 262144;
 		m_spritesPerAtlas = 262144;
@@ -1737,10 +1763,16 @@ void SurfaceVulkan::generateSpriteAtlases()
 		m_spritesPerModulo = 1024;
 	}
 
+	if(m_spriteSize <= 32)
+	{
+		m_spritesPerRow = m_spritesPerModulo / 32;
+		m_maxSprites = MAX_SPRITES;
+	}
+
 	for(Uint32 i = 0; i < m_spriteAtlases; ++i)
 	{
 		m_spritesAtlas.emplace_back();
-		if(!createVulkanTexture(m_spritesAtlas.back(), m_spritesPerModulo, m_spritesPerModulo, false))
+		if(!createVulkanTexture(m_spritesAtlas.back(), m_spritesPerModulo, m_spritesPerModulo, linearAtlas))
 		{
 			UTIL_MessageBox(true, "Vulkan: Out of video memory.");
 			exit(-1);
@@ -1861,6 +1893,15 @@ void SurfaceVulkan::doResize(Sint32, Sint32)
 
 void SurfaceVulkan::spriteManagerReset()
 {
+	Uint32 spriteSize = g_engine.getSpriteSize();
+	if(spriteSize != m_spriteSize)
+	{
+		vkDeviceWaitIdle(m_device);
+		m_spriteSize = spriteSize;
+		m_sceneScale = UTIL_max<Uint32>(1, spriteSize / 32);
+		createGameWindow();
+	}
+
 	for(U32BImages::iterator it = m_automapTiles.begin(), end = m_automapTiles.end(); it != end; ++it)
 		releaseVulkanTexture(it->second);
 
@@ -2448,10 +2489,127 @@ bool SurfaceVulkan::integer_scaling(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh, 
 	return true;
 }
 
+// HD sprites: the game window (m_sceneScale times bigger) is first scaled to
+// half its size with linear sampling, that averages 2x2 pixels, so it isn't
+// grainy when it is scaled down to the window afterwards.
+bool SurfaceVulkan::downsampleHDGameWindow()
+{
+	Uint32 width = UTIL_max<Uint32>(1, m_gameWindow.m_width / 2);
+	Uint32 height = UTIL_max<Uint32>(1, m_gameWindow.m_height / 2);
+	if(!m_hdHalfGameWindow || m_hdHalfGameWindow.m_width != width || m_hdHalfGameWindow.m_height != height)
+	{
+		if(!createVulkanTexture(m_hdHalfGameWindow, width, height, true, true) || !createTextureFramebuffer(m_hdHalfGameWindow))
+		{
+			if(m_hdHalfGameWindow)
+				releaseVulkanTexture(m_hdHalfGameWindow);
+			return false;
+		}
+	}
+
+	float cvkw = m_vkWidth;
+	float cvkh = m_vkHeight;
+	m_vkWidth = 2.0f / width;
+	m_vkHeight = 2.0f / height;
+
+	scheduleBatch();
+
+	VkRenderPassBeginInfo rpBeginInfo;
+	rpBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+	rpBeginInfo.pNext = NULL;
+	rpBeginInfo.renderPass = m_textureStoreRenderPass;
+	rpBeginInfo.framebuffer = m_hdHalfGameWindow.m_framebuffer;
+	rpBeginInfo.renderArea.offset = {0, 0};
+	rpBeginInfo.renderArea.extent.width = width;
+	rpBeginInfo.renderArea.extent.height = height;
+	rpBeginInfo.clearValueCount = 0;
+	rpBeginInfo.pClearValues = NULL;
+	vkCmdEndRenderPass(m_commandBuffer);
+	vkCmdBeginRenderPass(m_commandBuffer, &rpBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+	m_currentGraphicPipeline = GRAPHIC_PIPELINE_LAST;
+	m_isInsideRenderpass = true;
+	m_binded_framebuffer = &m_hdHalfGameWindow;
+
+	VkViewport viewport;
+	viewport.x = viewport.y = 0.0f;
+	viewport.width = SDL_static_cast(float, width);
+	viewport.height = SDL_static_cast(float, height);
+	viewport.minDepth = 0;
+	viewport.maxDepth = 1;
+	vkCmdSetViewport(m_commandBuffer, 0, 1, &viewport);
+
+	VkRect2D scissor;
+	scissor.offset = {0, 0};
+	scissor.extent.width = width;
+	scissor.extent.height = height;
+	vkCmdSetScissor(m_commandBuffer, 0, 1, &scissor);
+
+	PushConstant_Projection projection;
+	projection.vkWidth = m_vkWidth;
+	projection.vkHeight = m_vkHeight;
+	setupGraphicPipeline(GRAPHIC_PIPELINE_TEXTURE);
+	vkCmdPushConstants(m_commandBuffer, m_pipelineLayout[m_currentGraphicPipeline], VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(struct PushConstant_Projection), SDL_reinterpret_cast(void*, &projection));
+
+	float vertices[8];
+	vertices[0] = 0.0f; vertices[1] = 0.0f;
+	vertices[2] = 0.0f; vertices[3] = SDL_static_cast(float, height);
+	vertices[4] = SDL_static_cast(float, width); vertices[5] = 0.0f;
+	vertices[6] = SDL_static_cast(float, width); vertices[7] = SDL_static_cast(float, height);
+
+	float maxu = (width * 2) * m_gameWindow.m_scaleW;
+	float maxv = (height * 2) * m_gameWindow.m_scaleH;
+	float texcoords[8];
+	texcoords[0] = 0.0f; texcoords[1] = 0.0f;
+	texcoords[2] = 0.0f; texcoords[3] = maxv;
+	texcoords[4] = maxu; texcoords[5] = 0.0f;
+	texcoords[6] = maxu; texcoords[7] = maxv;
+
+	m_binded_texture = &m_gameWindow;
+	drawQuad(&m_gameWindow, vertices, texcoords);
+	scheduleBatch();
+
+	m_vkWidth = cvkw;
+	m_vkHeight = cvkh;
+
+	rpBeginInfo.renderPass = m_storeRenderPass;
+	rpBeginInfo.framebuffer = m_swapChainFrameBuffer[m_imageIndex];
+	rpBeginInfo.renderArea.extent.width = g_engine.getWindowWidth();
+	rpBeginInfo.renderArea.extent.height = g_engine.getWindowHeight();
+	vkCmdEndRenderPass(m_commandBuffer);
+	vkCmdBeginRenderPass(m_commandBuffer, &rpBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+	m_currentGraphicPipeline = GRAPHIC_PIPELINE_LAST;
+	m_isInsideRenderpass = true;
+	m_binded_framebuffer = NULL;
+
+	viewport.width = SDL_static_cast(float, g_engine.getWindowWidth());
+	viewport.height = SDL_static_cast(float, g_engine.getWindowHeight());
+	vkCmdSetViewport(m_commandBuffer, 0, 1, &viewport);
+
+	scissor.extent.width = g_engine.getWindowWidth();
+	scissor.extent.height = g_engine.getWindowHeight();
+	vkCmdSetScissor(m_commandBuffer, 0, 1, &scissor);
+	setupProjection();
+	return true;
+}
+
 void SurfaceVulkan::drawGameScene(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh, Sint32 x, Sint32 y, Sint32 w, Sint32 h)
 {
+	// The game window is m_sceneScale times bigger with HD sprites; it is
+	// drawn from its half size copy (see downsampleHDGameWindow).
+	Sint32 sceneScale = SDL_static_cast(Sint32, m_sceneScale);
+	VulkanTexture* gameWindow = &m_gameWindow;
+	float uvScale = SDL_static_cast(float, sceneScale);
+	if(sceneScale > 1 && downsampleHDGameWindow())
+	{
+		gameWindow = &m_hdHalfGameWindow;
+		uvScale *= 0.5f;
+	}
+
+	// Sharpening makes light dots next to the dark outlines of HD sprites
+	// that are shrunk to the window, so it is skipped with HD sprites.
+	bool sharpen = (g_engine.isSharpening() && m_haveSharpening && sceneScale == 1);
+
 	Uint8 antialiasing = g_engine.getAntialiasing();
-	if(antialiasing == CLIENT_ANTIALIASING_INTEGER)
+	if(antialiasing == CLIENT_ANTIALIASING_INTEGER && sceneScale == 1)
 	{
 		if(integer_scaling(sx, sy, sw, sh, x, y, w, h))
 			return;
@@ -2463,7 +2621,7 @@ void SurfaceVulkan::drawGameScene(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh, Si
 	}
 
 	scheduleBatch();
-	if(g_engine.isSharpening() && m_haveSharpening)
+	if(sharpen)
 	{
 		PushConstant_Sharpen prj;
 		prj.vkWidth = m_vkWidth;
@@ -2476,17 +2634,17 @@ void SurfaceVulkan::drawGameScene(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh, Si
 	else
 		setupGraphicPipeline(GRAPHIC_PIPELINE_TEXTURE);
 
-	m_binded_texture = &m_gameWindow;
+	m_binded_texture = gameWindow;
 
 	float minx = SDL_static_cast(float, x);
 	float maxx = SDL_static_cast(float, x + w);
 	float miny = SDL_static_cast(float, y);
 	float maxy = SDL_static_cast(float, y + h);
 
-	float minu = sx * m_gameWindow.m_scaleW;
-	float maxu = (sx + sw) * m_gameWindow.m_scaleW;
-	float minv = sy * m_gameWindow.m_scaleH;
-	float maxv = (sy + sh) * m_gameWindow.m_scaleH;
+	float minu = sx * uvScale * gameWindow->m_scaleW;
+	float maxu = (sx + sw) * uvScale * gameWindow->m_scaleW;
+	float minv = sy * uvScale * gameWindow->m_scaleH;
+	float maxv = (sy + sh) * uvScale * gameWindow->m_scaleH;
 
 	float vertices[8];
 	vertices[0] = minx; vertices[1] = miny;
@@ -2500,9 +2658,9 @@ void SurfaceVulkan::drawGameScene(Sint32 sx, Sint32 sy, Sint32 sw, Sint32 sh, Si
 	texcoords[4] = maxu; texcoords[5] = minv;
 	texcoords[6] = maxu; texcoords[7] = maxv;
 
-	drawQuad(&m_gameWindow, vertices, texcoords);
+	drawQuad(gameWindow, vertices, texcoords);
 	scheduleBatch();
-	if(g_engine.isSharpening() && m_haveSharpening)
+	if(sharpen)
 		setupGraphicPipeline(GRAPHIC_PIPELINE_TEXTURE);
 }
 
@@ -2513,8 +2671,10 @@ void SurfaceVulkan::beginGameScene()
 	Sint32 width = m_gameWindow.m_width;
 	Sint32 height = m_gameWindow.m_height;
 
-	m_vkWidth = 2.0f / width;
-	m_vkHeight = 2.0f / height;
+	// Drawing coordinates stay in 32 pixel units, the target is m_sceneScale bigger.
+	m_viewScale = SDL_static_cast(Sint32, m_sceneScale);
+	m_vkWidth = 2.0f * m_viewScale / width;
+	m_vkHeight = 2.0f * m_viewScale / height;
 
 	VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
 	VkRenderPassBeginInfo rpBeginInfo;
@@ -2558,6 +2718,7 @@ void SurfaceVulkan::endGameScene()
 	Sint32 width = g_engine.getWindowWidth();
 	Sint32 height = g_engine.getWindowHeight();
 
+	m_viewScale = 1;
 	m_vkWidth = 2.0f / width;
 	m_vkHeight = 2.0f / height;
 
@@ -2783,10 +2944,10 @@ void SurfaceVulkan::setClipRect(Sint32 x, Sint32 y, Sint32 w, Sint32 h)
 	scheduleBatch();
 
 	VkRect2D scissor;
-	scissor.offset.x = x;
-	scissor.offset.y = y;
-	scissor.extent.width = w;
-	scissor.extent.height = h;
+	scissor.offset.x = x * m_viewScale;
+	scissor.offset.y = y * m_viewScale;
+	scissor.extent.width = w * m_viewScale;
+	scissor.extent.height = h * m_viewScale;
 	vkCmdSetScissor(m_commandBuffer, 0, 1, &scissor);
 }
 
@@ -3099,7 +3260,7 @@ bool SurfaceVulkan::loadSprite(Uint32 spriteId, VulkanTexture* texture, Uint32 x
 		m_isInsideRenderpass = false;
 	}
 
-	static const VkDeviceSize imageSize = (32 * 32 * 4);
+	const VkDeviceSize imageSize = SDL_static_cast(VkDeviceSize, m_spriteSize) * m_spriteSize * 4;
 	VkBuffer stagingBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
 
@@ -3167,7 +3328,7 @@ bool SurfaceVulkan::loadSprite(Uint32 spriteId, VulkanTexture* texture, Uint32 x
 	region.imageSubresource.baseArrayLayer = 0;
 	region.imageSubresource.layerCount = 1;
 	region.imageOffset = {SDL_static_cast(Sint32, xoff), SDL_static_cast(Sint32, yoff), 0};
-	region.imageExtent = {32, 32, 1};
+	region.imageExtent = {m_spriteSize, m_spriteSize, 1};
 	vkCmdCopyBufferToImage(m_commandBuffer, stagingBuffer, texture->m_textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
 	barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -3187,7 +3348,7 @@ bool SurfaceVulkan::loadSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Uint32 
 		m_isInsideRenderpass = false;
 	}
 
-	static const VkDeviceSize imageSize = (32 * 32 * 4);
+	const VkDeviceSize imageSize = SDL_static_cast(VkDeviceSize, m_spriteSize) * m_spriteSize * 4;
 	VkBuffer stagingBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
 
@@ -3255,7 +3416,7 @@ bool SurfaceVulkan::loadSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Uint32 
 	region.imageSubresource.baseArrayLayer = 0;
 	region.imageSubresource.layerCount = 1;
 	region.imageOffset = {SDL_static_cast(Sint32, xoff), SDL_static_cast(Sint32, yoff), 0};
-	region.imageExtent = {32, 32, 1};
+	region.imageExtent = {m_spriteSize, m_spriteSize, 1};
 	vkCmdCopyBufferToImage(m_commandBuffer, stagingBuffer, texture->m_textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
 	barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -3291,9 +3452,9 @@ void SurfaceVulkan::drawSprite(Uint32 spriteId, Sint32 x, Sint32 y, Sint32 w, Si
 	U64BImages::iterator it = m_sprites.find(tempPos);
 	if(it == m_sprites.end())
 	{
-		if(m_sprites.size() >= MAX_SPRITES)
+		if(m_sprites.size() >= m_maxSprites)
 		{
-			while(++m_spriteChecker < MAX_SPRITES)
+			while(++m_spriteChecker < m_maxSprites)
 			{
 				Uint64 oldSpriteId = m_spritesIds.front();
 				it = m_sprites.find(oldSpriteId);
@@ -3334,13 +3495,13 @@ void SurfaceVulkan::drawSprite(Uint32 spriteId, Sint32 x, Sint32 y, Sint32 w, Si
 		{
 			Uint32 spriteIndex = SDL_static_cast(Uint32, m_sprites.size());
 			Uint32 spriteAtlas = spriteIndex / m_spritesPerAtlas;
-			spriteIndex = (spriteIndex % m_spritesPerAtlas) * 32;
+			spriteIndex = (spriteIndex % m_spritesPerAtlas);
 			if(spriteAtlas >= m_spritesAtlas.size())
 				return;
 
 			VulkanSpriteData& sprData = m_sprites[tempPos];
-			sprData.m_xOffset = spriteIndex % m_spritesPerModulo;
-			sprData.m_yOffset = (spriteIndex / m_spritesPerModulo) * 32;
+			sprData.m_xOffset = (spriteIndex % m_spritesPerRow) * m_spriteSize;
+			sprData.m_yOffset = (spriteIndex / m_spritesPerRow) * m_spriteSize;
 			sprData.m_surface = spriteAtlas;
 			sprData.m_lastUsage = m_currentFrame;
 			m_spritesIds.push_back(tempPos);
@@ -3369,6 +3530,13 @@ void SurfaceVulkan::drawSprite(Uint32 spriteId, Sint32 x, Sint32 y, Sint32 w, Si
 	float maxx = SDL_static_cast(float, x + w);
 	float miny = SDL_static_cast(float, y);
 	float maxy = SDL_static_cast(float, y + h);
+
+	if(m_spriteSize != 32)
+	{
+		// Source coordinates are in 32 pixel units.
+		Sint32 spriteScale = SDL_static_cast(Sint32, m_spriteSize / 32);
+		sx *= spriteScale; sy *= spriteScale; sw *= spriteScale; sh *= spriteScale;
+	}
 
 	sx += SDL_static_cast(Sint32, xOffset);
 	sy += SDL_static_cast(Sint32, yOffset);
@@ -3416,9 +3584,9 @@ void SurfaceVulkan::drawSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Sint32 
 	U64BImages::iterator it = m_sprites.find(tempPos);
 	if(it == m_sprites.end())
 	{
-		if(m_sprites.size() >= MAX_SPRITES)
+		if(m_sprites.size() >= m_maxSprites)
 		{
-			while(++m_spriteChecker < MAX_SPRITES)
+			while(++m_spriteChecker < m_maxSprites)
 			{
 				Uint64 oldSpriteId = m_spritesIds.front();
 				it = m_sprites.find(oldSpriteId);
@@ -3459,13 +3627,13 @@ void SurfaceVulkan::drawSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Sint32 
 		{
 			Uint32 spriteIndex = SDL_static_cast(Uint32, m_sprites.size());
 			Uint32 spriteAtlas = spriteIndex / m_spritesPerAtlas;
-			spriteIndex = (spriteIndex % m_spritesPerAtlas) * 32;
+			spriteIndex = (spriteIndex % m_spritesPerAtlas);
 			if(spriteAtlas >= m_spritesAtlas.size())
 				return;
 
 			VulkanSpriteData& sprData = m_sprites[tempPos];
-			sprData.m_xOffset = spriteIndex % m_spritesPerModulo;
-			sprData.m_yOffset = (spriteIndex / m_spritesPerModulo) * 32;
+			sprData.m_xOffset = (spriteIndex % m_spritesPerRow) * m_spriteSize;
+			sprData.m_yOffset = (spriteIndex / m_spritesPerRow) * m_spriteSize;
 			sprData.m_surface = spriteAtlas;
 			sprData.m_lastUsage = m_currentFrame;
 			m_spritesIds.push_back(tempPos);
@@ -3494,6 +3662,13 @@ void SurfaceVulkan::drawSpriteMask(Uint32 spriteId, Uint32 maskSpriteId, Sint32 
 	float maxx = SDL_static_cast(float, x + w);
 	float miny = SDL_static_cast(float, y);
 	float maxy = SDL_static_cast(float, y + h);
+
+	if(m_spriteSize != 32)
+	{
+		// Source coordinates are in 32 pixel units.
+		Sint32 spriteScale = SDL_static_cast(Sint32, m_spriteSize / 32);
+		sx *= spriteScale; sy *= spriteScale; sw *= spriteScale; sh *= spriteScale;
+	}
 
 	sx += SDL_static_cast(Sint32, xOffset);
 	sy += SDL_static_cast(Sint32, yOffset);

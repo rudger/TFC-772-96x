@@ -200,6 +200,9 @@ class SurfaceVulkan : public Surface
 		virtual void init();
 		virtual void doResize(Sint32 w, Sint32 h);
 		virtual void spriteManagerReset();
+		virtual bool supportsHDSprites() {return true;}
+		void createGameWindow();
+		bool downsampleHDGameWindow();
 		virtual unsigned char* getScreenPixels(Sint32& width, Sint32& height, bool& bgra);
 
 		virtual void beginScene();
@@ -249,6 +252,7 @@ class SurfaceVulkan : public Surface
 		VulkanTexture* m_pictures = NULL;
 		VulkanTexture m_gameWindow;
 		VulkanTexture m_scaled_gameWindow;
+		VulkanTexture m_hdHalfGameWindow;
 		VulkanTexture* m_binded_texture = NULL;
 		VulkanTexture* m_binded_framebuffer = NULL;
 
@@ -309,6 +313,15 @@ class SurfaceVulkan : public Surface
 		Uint32 m_spriteAtlases = 0;
 		Uint32 m_spritesPerAtlas = 0;
 		Uint32 m_spritesPerModulo = 0;
+		Uint32 m_spritesPerRow = 0;
+		Uint32 m_maxSprites = MAX_SPRITES;
+
+		// HD sprites: m_spriteSize is the size of a sprite in the atlases and the
+		// game window is m_sceneScale times bigger; m_viewScale is the scale of
+		// the current render target (drawing coordinates stay in 32 pixel units).
+		Uint32 m_spriteSize = 32;
+		Uint32 m_sceneScale = 1;
+		Sint32 m_viewScale = 1;
 
 		Uint32 m_graphicsQueuePresentIndex = 0;
 		Uint32 m_graphicsQueueNodeIndex = 0;

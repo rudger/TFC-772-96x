@@ -42,6 +42,7 @@ typedef void (APIENTRY *PFN_OglDeleteTextures)(int n, unsigned int* textures);
 typedef void (APIENTRY *PFN_OglTexImage2D)(unsigned int target, int level, int iformat, unsigned int width, unsigned int height, int border, unsigned int format, unsigned int type, const void* pixels);
 typedef void (APIENTRY *PFN_OglTexSubImage2D)(unsigned int target, int level, int xoffset, int yoffset, unsigned int width, unsigned int height, unsigned int format, unsigned int type, const void* pixels);
 typedef void (APIENTRY *PFN_OglTexParameteri)(unsigned int target, unsigned int pname, int param);
+typedef void (APIENTRY *PFN_OglGenerateMipmap)(unsigned int target);
 typedef void (APIENTRY *PFN_OglTexEnvi)(unsigned int target, unsigned int pname, int param);
 typedef void (APIENTRY *PFN_OglPixelStorei)(unsigned int pname, int param);
 typedef void (APIENTRY *PFN_OglCopyTexSubImage2D)(unsigned int target, int level, int xoffset, int yoffset, int x, int y, int width, int height);
@@ -201,7 +202,7 @@ class SurfaceOpenglCore : public Surface
 		void releaseOpenGLCoreProgram(OpenglCoreProgram& program);
 		void releaseOpenGLCoreShader(unsigned int& shader);
 
-		bool createOpenGLCoreTexture(OpenglCoreTexture& texture, Uint32 width, Uint32 height, bool linearSampler, bool frameBuffer = false);
+		bool createOpenGLCoreTexture(OpenglCoreTexture& texture, Uint32 width, Uint32 height, bool linearSampler, bool frameBuffer = false, bool mipmaps = false);
 		bool updateTextureData(OpenglCoreTexture& texture, unsigned char* data);
 		void releaseOpenGLCoreTexture(OpenglCoreTexture& texture);
 
@@ -216,10 +217,12 @@ class SurfaceOpenglCore : public Surface
 		virtual Uint32 getVRAM() {return m_totalVRAM;}
 
 		void generateSpriteAtlases();
+		void createGameWindow();
 
 		virtual void init();
 		virtual void doResize(Sint32 w, Sint32 h);
 		virtual void spriteManagerReset();
+		virtual bool supportsHDSprites() {return (OglGenerateMipmap != NULL);}
 		virtual unsigned char* getScreenPixels(Sint32& width, Sint32& height, bool& bgra);
 
 		virtual void beginScene();
@@ -285,6 +288,7 @@ class SurfaceOpenglCore : public Surface
 		PFN_OglTexImage2D OglTexImage2D;
 		PFN_OglTexSubImage2D OglTexSubImage2D;
 		PFN_OglTexParameteri OglTexParameteri;
+		PFN_OglGenerateMipmap OglGenerateMipmap = NULL;
 		PFN_OglTexEnvi OglTexEnvi;
 		PFN_OglPixelStorei OglPixelStorei;
 		PFN_OglCopyTexSubImage2D OglCopyTexSubImage2D;
@@ -368,6 +372,15 @@ class SurfaceOpenglCore : public Surface
 		Uint32 m_spriteAtlases = 0;
 		Uint32 m_spritesPerAtlas = 0;
 		Uint32 m_spritesPerModulo = 0;
+		Uint32 m_spritesPerRow = 0;
+		Uint32 m_maxSprites = MAX_SPRITES;
+
+		// HD sprites: m_spriteSize is the size of a sprite in the atlases and the
+		// game window is m_sceneScale times bigger; m_viewScale is the scale of
+		// the current render target (drawing coordinates stay in 32 pixel units).
+		Uint32 m_spriteSize = 32;
+		Uint32 m_sceneScale = 1;
+		Uint32 m_viewScale = 1;
 
 		Sint32 m_viewPortX = 0;
 		Sint32 m_viewPortY = 0;
