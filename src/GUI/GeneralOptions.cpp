@@ -120,6 +120,7 @@
 #define GENERAL_OPTIONS_ASK_BUY_PRODUCTS_EVENTID 1013
 
 extern Engine g_engine;
+extern Game g_game;
 
 void general_options_Events(Uint32 event, Sint32)
 {
